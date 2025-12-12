@@ -4,7 +4,7 @@
   "description": "Authentication backend with Express, TypeScript and MongoDB",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "nodemon src/server.ts",
+    "dev": "ts-node-dev --respawn --transpile-only server.ts",
     "build": "tsc",
     "start": "node dist/server.js"
   },
@@ -17,6 +17,7 @@
   "author": "SumNex Tech",
   "license": "ISC",
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
@@ -38,6 +39,7 @@
     "@types/node": "^20.10.6",
     "nodemon": "^3.0.2",
     "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
     "typescript": "^5.3.3"
   }
 }

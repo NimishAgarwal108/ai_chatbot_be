@@ -1,3 +1,4 @@
+// server.ts - UPDATED VERSION
 import express, { Application, Request, Response } from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
@@ -5,9 +6,10 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import mongoSanitize from 'express-mongo-sanitize';
 import rateLimit from 'express-rate-limit';
-import connectDB from './config/database';
-import authRoutes from './routes/authRoutes';
-import { errorHandler, notFound } from './middleware/errorMiddleware';
+import connectDB from './src/config/database';
+import authRoutes from './src/routes/authRoutes';
+import chatRoutes from './src/routes/chatRoutes'; 
+import { errorHandler, notFound } from './src/middleware/errorMiddleware';
 
 // Load environment variables
 dotenv.config();
@@ -76,6 +78,15 @@ const authLimiter = rateLimit({
   skipSuccessfulRequests: true, // Don't count successful requests
 });
 
+// Chat rate limiting (more lenient than auth)
+const chatLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 20, // 20 messages per minute
+  message: 'Too many messages, please slow down.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Request logging middleware (development only)
 if (process.env.NODE_ENV === 'development') {
   app.use((req: Request, res: Response, next) => {
@@ -103,6 +114,7 @@ app.get('/', (req: Request, res: Response) => {
     version: '1.0.0',
     endpoints: {
       auth: '/api/auth',
+      chat: '/api/chat',        // 👈 ADD THIS
       health: '/health'
     },
     documentation: process.env.API_DOCS_URL || 'Coming soon'
@@ -111,6 +123,7 @@ app.get('/', (req: Request, res: Response) => {
 
 // API Routes
 app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/chat', chatLimiter, chatRoutes); // 👈 ADD THIS LINE
 
 // 404 handler (must be after all routes)
 app.use(notFound);
@@ -130,6 +143,7 @@ const server = app.listen(PORT, () => {
 ║   🌍 Environment: ${process.env.NODE_ENV || 'development'}                    ║
 ║   🔗 URL:         http://localhost:${PORT}          ║
 ║   📝 Health:      http://localhost:${PORT}/health   ║
+║   💬 Chat:        http://localhost:${PORT}/api/chat ║
 ║                                                       ║
 ║   © 2025 SumNex Tech                                 ║
 ║                                                       ║
