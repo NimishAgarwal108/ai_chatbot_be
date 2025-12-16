@@ -262,7 +262,7 @@ app.get('/health', (req: Request, res: Response) => {
 
 // Root route
 app.get('/', (req: Request, res: Response) => {
-  const PORT = process.env.PORT || 3001;
+  const PORT = Number(process.env.PORT) || 3001;
   const baseUrl = IS_RAILWAY && process.env.RAILWAY_PUBLIC_DOMAIN 
     ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
     : `http://localhost:${PORT}`;
@@ -302,7 +302,7 @@ app.use(notFound);
 app.use(errorHandler);
 
 // Port and Host configuration
-const PORT = process.env.PORT || 3001;
+const PORT = Number(process.env.PORT) || 3001;
 // Railway needs 0.0.0.0, localhost needs 127.0.0.1 or can use 0.0.0.0
 const HOST = '0.0.0.0'; // Works for both!
 
