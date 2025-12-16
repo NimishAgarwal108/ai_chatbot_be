@@ -1,4 +1,4 @@
-// server.ts - UPDATED VERSION WITH DEEPGRAM VOICE CALLING
+// server.ts - WORKS ON BOTH LOCALHOST & RAILWAY
 import express, { Application, Request, Response } from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
@@ -19,31 +19,81 @@ import { VoiceHandler } from './src/websocket/voiceHandler';
 // Load environment variables
 dotenv.config();
 
+// Detect environment
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const IS_RAILWAY = process.env.RAILWAY_ENVIRONMENT !== undefined;
+const IS_LOCAL = !IS_PRODUCTION && !IS_RAILWAY;
+
+console.log(`🌍 Environment: ${IS_PRODUCTION ? 'Production' : 'Development'}`);
+console.log(`🚂 Platform: ${IS_RAILWAY ? 'Railway' : 'Local'}`);
+
 // Create Express app
 const app: Application = express();
 
 // Create HTTP server for Socket.IO
 const httpServer = createServer(app);
 
-// Initialize Socket.IO
-const allowedOrigins = process.env.CLIENT_URL 
-  ? process.env.CLIENT_URL.split(',') 
-  : ['http://localhost:3000'];
+// Parse allowed origins - works for both localhost and Railway
+const getClientURLs = (): string[] => {
+  const clientUrl = process.env.CLIENT_URL;
+  
+  if (clientUrl) {
+    // Parse comma-separated URLs
+    return clientUrl.split(',').map(url => url.trim()).filter(Boolean);
+  }
+  
+  // Default to localhost for development
+  return ['http://localhost:3000'];
+};
 
+const allowedOrigins = getClientURLs();
+
+console.log('🔐 Allowed CORS Origins:', allowedOrigins);
+
+// Initialize Socket.IO - works for both environments
 const io = new Server(httpServer, {
   cors: {
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile apps, Postman, curl)
+      if (!origin) {
+        return callback(null, true);
+      }
+      
+      // In development, allow localhost variants
+      if (!IS_PRODUCTION) {
+        const localhostPattern = /^http:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/;
+        if (localhostPattern.test(origin)) {
+          return callback(null, true);
+        }
+      }
+      
+      // Check allowed origins
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.warn(`⚠️  CORS blocked origin: ${origin}`);
+        console.warn('   Allowed origins:', allowedOrigins);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     methods: ['GET', 'POST'],
     credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization'],
   },
+  // Optimal settings for both environments
   pingTimeout: 60000,
   pingInterval: 25000,
+  transports: ['websocket', 'polling'],
+  allowEIO3: true,
+  perMessageDeflate: {
+    threshold: 1024,
+  },
 });
 
 // Connect to database
 connectDB();
 
-// Initialize AI Voice Service with Deepgram and Gemini (100% FREE)
+// Initialize AI Voice Service
 const deepgramApiKey = process.env.DEEPGRAM_API_KEY;
 const geminiApiKey = process.env.GEMINI_API_KEY;
 
@@ -67,42 +117,64 @@ if (deepgramApiKey && geminiApiKey) {
     console.warn('   ❌ GEMINI_API_KEY not found');
     console.warn('      Get it from: https://aistudio.google.com/app/apikey');
   }
-  console.warn('   Voice features will not work until both keys are added to .env');
 }
 
 // Initialize WebSocket Voice Handler
 try {
   new VoiceHandler(io);
+  console.log('✅ WebSocket Voice Handler initialized');
 } catch (error) {
   console.error('⚠️  Failed to initialize WebSocket Voice Handler:', error);
 }
 
-// Trust proxy (important for rate limiting behind reverse proxies like Nginx)
+// Trust proxy - needed for Railway, harmless for localhost
 app.set('trust proxy', 1);
 
-// Security Middleware
-app.use(helmet()); // Set security HTTP headers
+// Security Middleware - adjusted for environment
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+}));
 
-// CORS configuration
+// CORS configuration - works for both environments
 const corsOptions = {
   origin: (origin: string | undefined, callback: Function) => {
-    // Allow requests with no origin (like mobile apps or Postman)
-    if (!origin || allowedOrigins.includes(origin)) {
+    // Allow requests with no origin
+    if (!origin) {
+      return callback(null, true);
+    }
+    
+    // In development, be more permissive with localhost
+    if (!IS_PRODUCTION) {
+      const localhostPattern = /^http:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/;
+      if (localhostPattern.test(origin)) {
+        return callback(null, true);
+      }
+    }
+    
+    // Check allowed origins
+    if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
+      console.warn(`⚠️  CORS blocked origin: ${origin}`);
+      console.warn('   Allowed origins:', allowedOrigins);
       callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true,
   optionsSuccessStatus: 200,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Set-Cookie'],
 };
 
 app.use(cors(corsOptions));
 
+// Handle preflight requests
+app.options('*', cors(corsOptions));
+
 // Body parser middleware
-app.use(express.json({ limit: '10mb' })); // Limit payload size
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Cookie parser
@@ -111,30 +183,32 @@ app.use(cookieParser());
 // Data sanitization against NoSQL injection
 app.use(mongoSanitize());
 
-// Rate limiting
+// Rate limiting - more lenient in development
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: IS_PRODUCTION ? 200 : 1000, // More lenient in development
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    return req.path === '/health' || req.path === '/';
+  },
 });
 
-// Apply rate limiting to all routes
 app.use(limiter);
 
-// Stricter rate limiting for auth routes
+// Auth rate limiting
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // Only 5 login/signup attempts per 15 minutes
+  windowMs: 15 * 60 * 1000,
+  max: IS_PRODUCTION ? 10 : 100,
   message: 'Too many authentication attempts, please try again later.',
-  skipSuccessfulRequests: true, // Don't count successful requests
+  skipSuccessfulRequests: true,
 });
 
-// Chat rate limiting (more lenient than auth)
+// Chat rate limiting
 const chatLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
-  max: 20, // 20 messages per minute
+  windowMs: 1 * 60 * 1000,
+  max: IS_PRODUCTION ? 30 : 100,
   message: 'Too many messages, please slow down.',
   standardHeaders: true,
   legacyHeaders: false,
@@ -142,22 +216,22 @@ const chatLimiter = rateLimit({
 
 // Voice call rate limiting
 const voiceLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
-  max: 10, // 10 voice calls per minute
+  windowMs: 1 * 60 * 1000,
+  max: IS_PRODUCTION ? 15 : 50,
   message: 'Too many voice calls, please slow down.',
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-// Request logging middleware (development only)
-if (process.env.NODE_ENV === 'development') {
+// Request logging in development
+if (!IS_PRODUCTION) {
   app.use((req: Request, res: Response, next) => {
     console.log(`${req.method} ${req.path} - ${new Date().toISOString()}`);
     next();
   });
 }
 
-// Health check route (should be before rate limiting for monitoring)
+// Health check route
 app.get('/health', (req: Request, res: Response) => {
   const voiceStatus = (deepgramApiKey && geminiApiKey) 
     ? 'enabled' 
@@ -167,10 +241,11 @@ app.get('/health', (req: Request, res: Response) => {
 
   res.json({
     success: true,
-    message: 'Server is running',
+    message: IS_RAILWAY ? 'Server is running on Railway' : 'Server is running locally',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     environment: process.env.NODE_ENV || 'development',
+    platform: IS_RAILWAY ? 'Railway' : 'Local',
     services: {
       database: 'connected',
       voice: voiceStatus,
@@ -178,25 +253,38 @@ app.get('/health', (req: Request, res: Response) => {
       speechToText: deepgramApiKey ? 'Deepgram (FREE)' : 'disabled',
       textToSpeech: 'Browser Web Speech API (FREE)',
       aiChat: geminiApiKey ? 'Google Gemini (FREE)' : 'disabled',
+    },
+    cors: {
+      allowedOrigins: allowedOrigins,
     }
   });
 });
 
 // Root route
 app.get('/', (req: Request, res: Response) => {
+  const PORT = process.env.PORT || 3001;
+  const baseUrl = IS_RAILWAY && process.env.RAILWAY_PUBLIC_DOMAIN 
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+    : `http://localhost:${PORT}`;
+
   res.json({
     success: true,
     message: 'AI Chat Bot API - SumNex Tech',
     version: '2.0.0',
+    platform: IS_RAILWAY ? 'Railway.app' : 'Local Development',
     endpoints: {
-      auth: '/api/auth',
-      chat: '/api/chat',
-      voice: '/api/voice',
-      health: '/health'
+      auth: `${baseUrl}/api/auth`,
+      chat: `${baseUrl}/api/chat`,
+      voice: `${baseUrl}/api/voice`,
+      health: `${baseUrl}/health`,
     },
     websocket: {
-      url: `ws://localhost:${process.env.PORT || 3001}`,
+      url: baseUrl.replace('https://', 'wss://').replace('http://', 'ws://'),
       namespace: '/',
+      status: 'enabled',
+    },
+    cors: {
+      allowedOrigins: allowedOrigins,
     },
     documentation: process.env.API_DOCS_URL || 'Coming soon'
   });
@@ -207,32 +295,50 @@ app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/chat', chatLimiter, chatRoutes);
 app.use('/api/voice', voiceLimiter, voiceRoutes);
 
-// 404 handler (must be after all routes)
+// 404 handler
 app.use(notFound);
 
-// Error handling middleware (must be last)
+// Error handling middleware
 app.use(errorHandler);
 
-// Start server
+// Port and Host configuration
 const PORT = process.env.PORT || 3001;
-const server = httpServer.listen(PORT, () => {
+// Railway needs 0.0.0.0, localhost needs 127.0.0.1 or can use 0.0.0.0
+const HOST = '0.0.0.0'; // Works for both!
+
+// Start server
+const server = httpServer.listen(PORT, HOST, () => {
+  const railwayUrl = IS_RAILWAY && process.env.RAILWAY_PUBLIC_DOMAIN 
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+    : `http://localhost:${PORT}`;
+
   console.log(`
 ╔═══════════════════════════════════════════════════════╗
 ║                                                       ║
-║   🚀 AI Chat Bot API - Server Started                ║
+║   🚀 AI Chat Bot API - ${IS_RAILWAY ? 'Railway' : 'Local   '}              ║
 ║                                                       ║
-║   📡 Port:        ${PORT}                           ║
-║   🌍 Environment: ${process.env.NODE_ENV || 'development'}                    ║
-║   🔗 URL:         http://localhost:${PORT}          ║
-║   📝 Health:      http://localhost:${PORT}/health   ║
-║   💬 Chat:        http://localhost:${PORT}/api/chat ║
-║   🎤 Voice:       http://localhost:${PORT}/api/voice║
-║   📡 WebSocket:   ws://localhost:${PORT}            ║
+║   🌐 Platform:    ${IS_RAILWAY ? 'Railway.app' : 'Local Development'}                        ║
+║   📡 Port:        ${PORT}                                   ║
+║   🏠 Host:        ${HOST}                              ║
+║   🌍 Environment: ${(process.env.NODE_ENV || 'development').padEnd(31)} ║
+║   🔗 URL:         ${railwayUrl.padEnd(31)} ║
+║   📝 Health:      ${railwayUrl}/health${' '.repeat(Math.max(0, 15 - railwayUrl.length))} ║
+║   💬 Chat:        ${railwayUrl}/api/chat${' '.repeat(Math.max(0, 12 - railwayUrl.length))} ║
+║   🎤 Voice:       ${railwayUrl}/api/voice${' '.repeat(Math.max(0, 11 - railwayUrl.length))} ║
+║   📡 WebSocket:   ${railwayUrl.replace('https', 'wss').replace('http', 'ws')}${' '.repeat(Math.max(0, 10 - railwayUrl.length))} ║
 ║                                                       ║
 ║   © 2025 SumNex Tech                                 ║
 ║                                                       ║
 ╚═══════════════════════════════════════════════════════╝
   `);
+  
+  console.log('🔐 CORS Configuration:');
+  console.log(`   Mode: ${IS_PRODUCTION ? 'Production (Strict)' : 'Development (Permissive)'}`);
+  console.log(`   Allowed Origins: ${allowedOrigins.join(', ')}`);
+  if (!IS_PRODUCTION) {
+    console.log(`   + All localhost variants (http://localhost:*, http://127.0.0.1:*)`);
+  }
+  console.log('');
   
   if (deepgramApiKey && geminiApiKey) {
     console.log('🎤 Voice calling is 100% FREE & ENABLED!');
@@ -244,17 +350,27 @@ const server = httpServer.listen(PORT, () => {
     console.log('⚠️  Voice calling is PARTIALLY ENABLED');
     console.log('   ✅ Deepgram API Key found');
     console.log('   ❌ Gemini API Key missing');
-    console.log('   Add GEMINI_API_KEY to .env for full voice support');
+    console.log(`   Add GEMINI_API_KEY to ${IS_RAILWAY ? 'Railway variables' : '.env file'}`);
   } else if (geminiApiKey) {
     console.log('⚠️  Voice calling is PARTIALLY ENABLED');
     console.log('   ❌ Deepgram API Key missing');
     console.log('   ✅ Gemini API Key found');
-    console.log('   Add DEEPGRAM_API_KEY to .env for full voice support');
+    console.log(`   Add DEEPGRAM_API_KEY to ${IS_RAILWAY ? 'Railway variables' : '.env file'}`);
   } else {
     console.log('⚠️  Voice calling is DISABLED');
-    console.log('   Add both API keys to .env:');
+    console.log(`   Add both API keys to ${IS_RAILWAY ? 'Railway variables' : '.env file'}:`);
     console.log('   - DEEPGRAM_API_KEY (https://console.deepgram.com)');
     console.log('   - GEMINI_API_KEY (https://aistudio.google.com/app/apikey)');
+  }
+  
+  console.log('');
+  console.log('✅ Server is ready to accept connections!');
+  
+  if (!IS_PRODUCTION) {
+    console.log('\n💡 Development Tips:');
+    console.log('   - Frontend should connect to: http://localhost:3001');
+    console.log('   - WebSocket URL: ws://localhost:3001');
+    console.log('   - Hot reload enabled with nodemon/ts-node-dev');
   }
 });
 
@@ -262,28 +378,25 @@ const server = httpServer.listen(PORT, () => {
 const gracefulShutdown = (signal: string) => {
   console.log(`\n${signal} signal received: closing HTTP server`);
   
-  // Close Socket.IO connections
   io.close(() => {
     console.log('✅ WebSocket connections closed');
   });
   
   server.close(() => {
     console.log('✅ HTTP server closed');
+    console.log('👋 Goodbye!');
     process.exit(0);
   });
 
-  // Force close after 10 seconds
   setTimeout(() => {
     console.error('⚠️ Could not close connections in time, forcefully shutting down');
     process.exit(1);
   }, 10000);
 };
 
-// Handle different termination signals
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-// Handle unhandled promise rejections
 process.on('unhandledRejection', (err: Error) => {
   console.log('❌ UNHANDLED REJECTION! Shutting down...');
   console.log('Error name:', err.name);
@@ -297,7 +410,6 @@ process.on('unhandledRejection', (err: Error) => {
   });
 });
 
-// Handle uncaught exceptions
 process.on('uncaughtException', (err: Error) => {
   console.log('❌ UNCAUGHT EXCEPTION! Shutting down...');
   console.log('Error name:', err.name);
