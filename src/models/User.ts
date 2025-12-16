@@ -24,7 +24,10 @@ const userSchema = new Schema<IUser>(
     },
     password: {
       type: String,
-      required: [true, 'Password is required'],
+      required: function(this: IUser) {
+        // Password is only required if authProvider is 'local'
+        return this.authProvider === 'local';
+      },
       minlength: [8, 'Password must be at least 8 characters long'],
       select: false, // Don't return password by default
       validate: {
@@ -49,6 +52,19 @@ const userSchema = new Schema<IUser>(
         message: 'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'
       }
     },
+    authProvider: {
+      type: String,
+      enum: ['local', 'google'],
+      default: 'local'
+    },
+    googleId: {
+      type: String,
+      unique: true,
+      sparse: true // Allows null values while maintaining uniqueness for non-null values
+    },
+    picture: {
+      type: String
+    },
     agreedToTerms: {
       type: Boolean,
       default: false
@@ -64,8 +80,8 @@ const userSchema = new Schema<IUser>(
 
 // Hash password before saving
 userSchema.pre('save', async function (next) {
-  // Only hash if password is modified
-  if (!this.isModified('password')) {
+  // Only hash if password is modified and exists
+  if (!this.isModified('password') || !this.password) {
     return next();
   }
 
@@ -91,6 +107,7 @@ userSchema.methods.comparePassword = async function (
 
 // Create indexes
 userSchema.index({ email: 1 });
+userSchema.index({ googleId: 1 }, { sparse: true });
 
 const User = mongoose.model<IUser>('User', userSchema);
 

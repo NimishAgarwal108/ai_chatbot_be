@@ -1,7 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
+import { OAuth2Client } from 'google-auth-library';
 import User from '../models/User';
 import { sendTokenResponse } from '../Utils/tokenUtils';
-import { SignupRequest, LoginRequest, AuthRequest } from '../types';
+import { SignupRequest, LoginRequest, AuthRequest, GoogleAuthRequest } from '../types';
+
+// Initialize Google OAuth client
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // @desc    Register user
 // @route   POST /api/auth/signup
@@ -38,6 +42,7 @@ export const signup = async (
       name,
       email,
       password,
+      authProvider: 'local',
       agreedToTerms: agreeToTerms,
       agreedToTermsAt: new Date()
     });
@@ -89,6 +94,15 @@ export const login = async (
       return;
     }
 
+    // Check if user is using Google auth
+    if (user.authProvider === 'google') {
+      res.status(400).json({
+        success: false,
+        message: 'This account uses Google Sign-In. Please sign in with Google.'
+      });
+      return;
+    }
+
     // Check if password matches
     const isMatch = await user.comparePassword(password);
 
@@ -113,6 +127,114 @@ export const login = async (
     );
   } catch (error) {
     next(error);
+  }
+};
+
+// @desc    Google Sign-In
+// @route   POST /api/auth/google
+// @access  Public
+export const googleAuth = async (
+  req: Request<{}, {}, GoogleAuthRequest>,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { credential } = req.body;
+
+    if (!credential) {
+      res.status(400).json({
+        success: false,
+        message: 'Google credential is required'
+      });
+      return;
+    }
+
+    // Verify Google token
+    const ticket = await client.verifyIdToken({
+      idToken: credential,
+      audience: process.env.GOOGLE_CLIENT_ID
+    });
+
+    const payload = ticket.getPayload();
+
+    if (!payload) {
+      res.status(400).json({
+        success: false,
+        message: 'Invalid Google token'
+      });
+      return;
+    }
+
+    const { sub: googleId, email, name, picture } = payload;
+
+    if (!email || !name) {
+      res.status(400).json({
+        success: false,
+        message: 'Unable to retrieve user information from Google'
+      });
+      return;
+    }
+
+    // Check if user exists
+    let user = await User.findOne({ email });
+
+    if (user) {
+      // User exists - check if they're using local auth
+      if (user.authProvider === 'local' && !user.googleId) {
+        // Link Google account to existing local account
+        user.googleId = googleId;
+        user.authProvider = 'google';
+        user.picture = picture;
+        await user.save();
+      } else if (user.googleId !== googleId) {
+        // User exists with different Google ID
+        res.status(400).json({
+          success: false,
+          message: 'Email already associated with another account'
+        });
+        return;
+      }
+      // User exists with same Google ID - proceed to login
+    } else {
+      // Create new user
+      user = await User.create({
+        name,
+        email,
+        googleId,
+        picture,
+        authProvider: 'google',
+        agreedToTerms: true, // Assume agreement for Google sign-in
+        agreedToTermsAt: new Date()
+      });
+    }
+
+    // Send token response
+    sendTokenResponse(
+      {
+        id: user._id.toString(),
+        email: user.email,
+        name: user.name,
+        picture: user.picture
+      },
+      200,
+      res,
+      false
+    );
+  } catch (error: any) {
+    console.error('Google Auth Error:', error);
+    
+    if (error.message && error.message.includes('Token used too late')) {
+      res.status(400).json({
+        success: false,
+        message: 'Google token has expired. Please try again.'
+      });
+      return;
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Google authentication failed. Please try again.'
+    });
   }
 };
 
@@ -141,6 +263,8 @@ export const getMe = async (
         id: user._id,
         name: user.name,
         email: user.email,
+        picture: user.picture,
+        authProvider: user.authProvider,
         agreedToTerms: user.agreedToTerms,
         agreedToTermsAt: user.agreedToTermsAt,
         createdAt: user.createdAt,

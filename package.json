@@ -1,12 +1,14 @@
 {
   "name": "auth-backend",
   "version": "2.0.0",
-  "description": "Authentication backend with Express, TypeScript, MongoDB and AI Voice Calling",
+  "description": "Authentication backend with Express, TypeScript, MongoDB, AI Voice Calling, and Google OAuth",
   "main": "dist/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "clean": "rm -rf dist",
+    "rebuild": "npm run clean && npm run build"
   },
   "keywords": [
     "express",
@@ -15,7 +17,9 @@
     "mongodb",
     "voice-calling",
     "ai",
-    "openai"
+    "openai",
+    "google-oauth",
+    "jwt"
   ],
   "author": "SumNex Tech",
   "license": "ISC",
@@ -30,6 +34,7 @@
     "express-mongo-sanitize": "^2.2.0",
     "express-rate-limit": "^8.2.1",
     "express-validator": "^7.0.1",
+    "google-auth-library": "^10.5.0",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.0.3",
@@ -51,5 +56,9 @@
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
   }
 }

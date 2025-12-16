@@ -1,11 +1,15 @@
 import { Request } from 'express';
 import { Document } from 'mongoose';
 
-// User Interface
+// User interface
 export interface IUser extends Document {
+  _id: any;
   name: string;
   email: string;
-  password: string;
+  password?: string;
+  authProvider: 'local' | 'google';
+  googleId?: string;
+  picture?: string;
   agreedToTerms: boolean;
   agreedToTermsAt?: Date;
   createdAt: Date;
@@ -13,23 +17,7 @@ export interface IUser extends Document {
   comparePassword(candidatePassword: string): Promise<boolean>;
 }
 
-// Auth Request with User
-export interface AuthRequest extends Request {
-  user?: {
-    id: string;
-    email: string;
-    name: string;
-  };
-}
-
-// Login Request Body
-export interface LoginRequest {
-  email: string;
-  password: string;
-  rememberMe?: boolean;
-}
-
-// Signup Request Body
+// Request body types
 export interface SignupRequest {
   name: string;
   email: string;
@@ -38,17 +26,28 @@ export interface SignupRequest {
   agreeToTerms: boolean;
 }
 
-// Token Payload
+export interface LoginRequest {
+  email: string;
+  password: string;
+  rememberMe?: boolean;
+}
+
+export interface GoogleAuthRequest {
+  credential: string;
+}
+
+// Auth request with user
+export interface AuthRequest extends Request {
+  user?: {
+    id: string;
+    email: string;
+    name: string;
+  };
+}
+
+// Token payload
 export interface TokenPayload {
   id: string;
   email: string;
   name: string;
-}
-
-// API Response
-export interface ApiResponse<T = any> {
-  success: boolean;
-  message: string;
-  data?: T;
-  error?: string;
 }
