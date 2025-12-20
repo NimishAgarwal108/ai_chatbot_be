@@ -1,18 +1,18 @@
 // server.ts - WORKS ON BOTH LOCALHOST & RAILWAY
-import express, { Application, Request, Response } from 'express';
-import dotenv from 'dotenv';
-import cors from 'cors';
 import cookieParser from 'cookie-parser';
-import helmet from 'helmet';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import express, { Application, Request, Response } from 'express';
 import mongoSanitize from 'express-mongo-sanitize';
 import rateLimit from 'express-rate-limit';
+import helmet from 'helmet';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import connectDB from './src/config/database';
+import { errorHandler, notFound } from './src/middleware/errorMiddleware';
 import authRoutes from './src/routes/authRoutes';
 import chatRoutes from './src/routes/chatRoutes';
 import voiceRoutes from './src/routes/voiceRoutes';
-import { errorHandler, notFound } from './src/middleware/errorMiddleware';
 import { getAIVoiceService } from './src/services/aiVoiceService';
 import { VoiceHandler } from './src/websocket/voiceHandler';
 
@@ -99,15 +99,18 @@ const geminiApiKey = process.env.GEMINI_API_KEY;
 
 if (deepgramApiKey && geminiApiKey) {
   try {
-    getAIVoiceService(deepgramApiKey, geminiApiKey);
-    console.log('✅ AI Voice Service initialized (100% FREE!)');
-    console.log('   - Speech-to-Text: Deepgram (FREE - 45,000 min/month)');
-    console.log('   - AI Chat: Google Gemini (FREE - 60 requests/min)');
-    console.log('   - Text-to-Speech: Browser Web Speech API (FREE)');
+    // Lazy singleton initialization (no arguments)
+    getAIVoiceService();
+
+    console.log('✅ AI Voice Service initialized');
+    console.log('   - Speech-to-Text: Deepgram');
+    console.log('   - AI Chat: Anthropic Claude');
+    console.log('   - Text-to-Speech: Browser Web Speech API');
   } catch (error) {
     console.error('⚠️  Failed to initialize AI Voice Service:', error);
   }
-} else {
+}
+ else {
   console.warn('⚠️  Voice Service Configuration Incomplete:');
   if (!deepgramApiKey) {
     console.warn('   ❌ DEEPGRAM_API_KEY not found');

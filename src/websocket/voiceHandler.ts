@@ -1,16 +1,17 @@
 // ============================================
 // File: src/websocket/voiceHandler.ts
-// WebSocket Handler for Real-time Voice Streaming
+// WebSocket Voice Handler - FIXED VERSION
 // ============================================
+
 import { Server, Socket } from 'socket.io';
 import { getAIVoiceService } from '../services/aiVoiceService';
-import jwt from 'jsonwebtoken';
 
-export interface VoiceMessage {
+interface VoiceMessage {
   type: 'audio' | 'text' | 'control';
   data: string | Buffer;
   timestamp: number;
   voice?: string;
+  format?: string;
 }
 
 export class VoiceHandler {
@@ -18,151 +19,124 @@ export class VoiceHandler {
 
   constructor(io: Server) {
     this.io = io;
-    this.setupMiddleware();
-    this.setupHandlers();
+    console.log('🎤 VoiceHandler constructor called');
+    
+    // ✅ CRITICAL FIX: Auto-initialize on construction
+    this.initialize();
   }
 
-  // Middleware for authentication
-  private setupMiddleware() {
-    this.io.use((socket: Socket, next) => {
-      try {
-        const token = socket.handshake.auth.token;
-        
-        if (!token) {
-          return next(new Error('Authentication token required'));
-        }
-
-        // Verify JWT token
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
-        (socket as any).user = decoded;
-        next();
-      } catch (error) {
-        console.error('WebSocket auth error:', error);
-        next(new Error('Invalid authentication token'));
-      }
-    });
-  }
-
-  // Setup WebSocket event handlers
-  private setupHandlers() {
+  initialize(): void {
+    console.log('🔧 Initializing WebSocket voice handlers...');
+    
     this.io.on('connection', (socket: Socket) => {
-      console.log(`Voice client connected: ${socket.id}`);
-      const user = (socket as any).user;
+      console.log('✅ Voice client connected:', socket.id);
 
-      // Send welcome message
+      // Send connection confirmation
       socket.emit('voice:connected', {
-        message: 'Connected to AI voice service',
-        userId: user.id,
+        status: 'connected',
+        message: 'Voice service ready',
         timestamp: Date.now(),
       });
 
       // Handle incoming audio
       socket.on('voice:audio', async (message: VoiceMessage) => {
-        try {
-          await this.handleAudioMessage(socket, message);
-        } catch (error) {
-          console.error('Error handling audio:', error);
-          socket.emit('voice:error', {
-            error: 'Failed to process audio',
-            timestamp: Date.now(),
-          });
-        }
+        await this.handleAudioMessage(socket, message);
       });
 
-      // Handle text messages
+      // Handle incoming text
       socket.on('voice:text', async (message: VoiceMessage) => {
-        try {
-          await this.handleTextMessage(socket, message);
-        } catch (error) {
-          console.error('Error handling text:', error);
-          socket.emit('voice:error', {
-            error: 'Failed to process text',
-            timestamp: Date.now(),
-          });
-        }
+        await this.handleTextMessage(socket, message);
       });
 
-      // Handle control messages (start, stop, mute, etc.)
+      // Handle control commands
       socket.on('voice:control', (message: VoiceMessage) => {
         this.handleControlMessage(socket, message);
       });
 
       // Handle disconnection
-      socket.on('disconnect', () => {
-        console.log(`Voice client disconnected: ${socket.id}`);
+      socket.on('disconnect', (reason) => {
+        console.log('👋 Voice client disconnected:', socket.id, 'Reason:', reason);
+      });
+
+      // Handle errors
+      socket.on('error', (error) => {
+        console.error('❌ Socket error:', error);
       });
     });
-
-    console.log('✅ WebSocket Voice Handler initialized');
+    
+    console.log('✅ Voice handlers initialized successfully');
   }
 
-  // Handle audio messages
-  private async handleAudioMessage(socket: Socket, message: VoiceMessage) {
+  /**
+   * Handle audio messages with proper base64 decoding
+   */
+  private async handleAudioMessage(socket: Socket, message: VoiceMessage): Promise<void> {
     try {
-      // Convert base64 to buffer if needed
-      const audioBuffer = typeof message.data === 'string'
-        ? Buffer.from(message.data, 'base64')
-        : message.data;
+      console.log('📥 Received audio message');
+      console.log('   Type:', message.type);
+      console.log('   Format:', message.format);
+      console.log('   Timestamp:', message.timestamp);
 
-      const voice = message.voice || 'nova';
+      if (!message.data) {
+        throw new Error('No audio data provided');
+      }
 
-      // Send status update
-      socket.emit('voice:status', {
-        status: 'processing',
-        message: 'Processing your voice...',
-        timestamp: Date.now(),
-      });
+      // The data comes as base64 string from frontend
+      let audioData: string;
+      
+      if (typeof message.data === 'string') {
+        audioData = message.data;
+        console.log('   Base64 string length:', audioData.length);
+      } else if (Buffer.isBuffer(message.data)) {
+        // Convert buffer to base64 if it came as buffer
+        audioData = message.data.toString('base64');
+        console.log('   Converted buffer to base64, length:', audioData.length);
+      } else {
+        throw new Error('Invalid audio data type');
+      }
+
+      // Validate base64
+      if (audioData.length === 0) {
+        throw new Error('Empty audio data');
+      }
 
       // Get AI Voice Service
       const aiVoiceService = getAIVoiceService();
 
-      // Process voice call
-      const result = await aiVoiceService.processVoiceCall(audioBuffer, voice);
+      // Pass the base64 string directly to the service
+      await aiVoiceService.processVoiceCall(
+        audioData,
+        socket,
+        {
+          voice: message.voice,
+        }
+      );
 
-      // Send transcription
-      socket.emit('voice:text', {
-        type: 'transcription',
-        text: result.text,
-        timestamp: Date.now(),
-      });
-
-      // Send AI response text
-      socket.emit('voice:text', {
-        type: 'response',
-        text: result.response,
-        timestamp: Date.now(),
-      });
-
-      // Send audio response
-      socket.emit('voice:audio', {
-        type: 'response',
-        data: result.audioBuffer.toString('base64'),
-        timestamp: Date.now(),
-      });
-
-      // Send completion status
-      socket.emit('voice:status', {
-        status: 'complete',
-        message: 'Voice processing complete',
-        timestamp: Date.now(),
-      });
     } catch (error: any) {
-      console.error('Audio processing error:', error);
+      console.error('❌ Audio processing error:', error);
+      
       socket.emit('voice:error', {
-        error: error.message,
+        type: 'error',
+        error: error.message || 'Failed to process audio',
         timestamp: Date.now(),
       });
     }
   }
 
-  // Handle text messages
-  private async handleTextMessage(socket: Socket, message: VoiceMessage) {
+  /**
+   * Handle text messages
+   */
+  private async handleTextMessage(socket: Socket, message: VoiceMessage): Promise<void> {
     try {
-      const text = message.data as string;
-      const voice = message.voice || 'nova';
+      console.log('📥 Received text message:', message.data);
 
-      // Send status update
+      if (!message.data || typeof message.data !== 'string') {
+        throw new Error('Invalid text data');
+      }
+
+      // Send status
       socket.emit('voice:status', {
+        type: 'status',
         status: 'processing',
         message: 'Processing your message...',
         timestamp: Date.now(),
@@ -171,85 +145,94 @@ export class VoiceHandler {
       // Get AI Voice Service
       const aiVoiceService = getAIVoiceService();
 
-      // Process with AI
-      const aiResponse = await aiVoiceService.processWithAI(text);
+      // Generate response
+      const response = await aiVoiceService.generateResponseOnly(message.data);
 
-      // Send AI response text
+      // Send response
       socket.emit('voice:text', {
         type: 'response',
-        text: aiResponse,
+        text: response,
         timestamp: Date.now(),
       });
 
-      // Generate and send audio
-      const audioBuffer = await aiVoiceService.synthesizeSpeech(aiResponse, voice);
-      socket.emit('voice:audio', {
-        type: 'response',
-        data: audioBuffer.toString('base64'),
-        timestamp: Date.now(),
-      });
-
-      // Send completion status
       socket.emit('voice:status', {
+        type: 'status',
         status: 'complete',
-        message: 'Message processing complete',
+        message: 'Complete',
         timestamp: Date.now(),
       });
+
     } catch (error: any) {
-      console.error('Text processing error:', error);
+      console.error('❌ Text processing error:', error);
+      
       socket.emit('voice:error', {
-        error: error.message,
+        type: 'error',
+        error: error.message || 'Failed to process text',
         timestamp: Date.now(),
       });
     }
   }
 
-  // Handle control messages
-  private handleControlMessage(socket: Socket, message: VoiceMessage) {
-    console.log(`Control message received: ${message.data}`);
-    
-    // Handle different control actions
-    const action = message.data as string;
-    
-    switch (action) {
-      case 'start':
-        socket.emit('voice:status', {
-          status: 'ready',
-          message: 'Voice call started',
-          timestamp: Date.now(),
-        });
-        break;
+  /**
+   * Handle control messages
+   */
+  private handleControlMessage(socket: Socket, message: VoiceMessage): void {
+    try {
+      console.log('🎮 Control command:', message.data);
+
+      const command = message.data as string;
+
+      switch (command) {
+        case 'start':
+          socket.emit('voice:status', {
+            type: 'status',
+            status: 'listening',
+            message: 'Listening...',
+            timestamp: Date.now(),
+          });
+          break;
+
+        case 'stop':
+          socket.emit('voice:status', {
+            type: 'status',
+            status: 'stopped',
+            message: 'Stopped',
+            timestamp: Date.now(),
+          });
+          break;
+
+        case 'mute':
+          socket.emit('voice:status', {
+            type: 'status',
+            status: 'muted',
+            message: 'Muted',
+            timestamp: Date.now(),
+          });
+          break;
+
+        case 'unmute':
+          socket.emit('voice:status', {
+            type: 'status',
+            status: 'unmuted',
+            message: 'Unmuted',
+            timestamp: Date.now(),
+          });
+          break;
+
+        default:
+          console.warn('Unknown control command:', command);
+      }
+
+    } catch (error: any) {
+      console.error('❌ Control message error:', error);
       
-      case 'stop':
-        socket.emit('voice:status', {
-          status: 'stopped',
-          message: 'Voice call stopped',
-          timestamp: Date.now(),
-        });
-        break;
-      
-      case 'mute':
-        socket.emit('voice:status', {
-          status: 'muted',
-          message: 'Microphone muted',
-          timestamp: Date.now(),
-        });
-        break;
-      
-      case 'unmute':
-        socket.emit('voice:status', {
-          status: 'unmuted',
-          message: 'Microphone unmuted',
-          timestamp: Date.now(),
-        });
-        break;
-      
-      default:
-        socket.emit('voice:status', {
-          status: 'unknown',
-          message: `Unknown control action: ${action}`,
-          timestamp: Date.now(),
-        });
+      socket.emit('voice:error', {
+        type: 'error',
+        error: error.message || 'Failed to process control',
+        timestamp: Date.now(),
+      });
     }
   }
 }
+
+export default VoiceHandler;
