@@ -1,12 +1,19 @@
 import { Request } from 'express';
 import { Document } from 'mongoose';
 
-// User interface
+// User interface - UPDATED with new profile fields
 export interface IUser extends Document {
   _id: any;
   name: string;
   email: string;
   password?: string;
+  phone?: string;  // NEW
+  location?: string;  // NEW
+  bio?: string;  // NEW
+  preferences?: {  // NEW
+    notifications: boolean;
+    language: string;
+  };
   authProvider: 'local' | 'google';
   googleId?: string;
   picture?: string;
@@ -50,4 +57,23 @@ export interface TokenPayload {
   id: string;
   email: string;
   name: string;
+}
+
+// NEW: Profile request types
+export interface UpdateProfileRequest {
+  name?: string;
+  phone?: string;
+  location?: string;
+  bio?: string;
+}
+
+export interface UpdatePreferencesRequest {
+  notifications?: boolean;
+  language?: string;
+}
+
+export interface ChangePasswordRequest {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
 }

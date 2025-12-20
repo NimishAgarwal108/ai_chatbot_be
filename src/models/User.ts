@@ -25,26 +25,21 @@ const userSchema = new Schema<IUser>(
     password: {
       type: String,
       required: function(this: IUser) {
-        // Password is only required if authProvider is 'local'
         return this.authProvider === 'local';
       },
       minlength: [8, 'Password must be at least 8 characters long'],
-      select: false, // Don't return password by default
+      select: false,
       validate: {
         validator: function(v: string) {
-          // Only validate on new passwords (not hashed ones)
           if (this.isNew || this.isModified('password')) {
-            // Check if already hashed (bcrypt hashes start with $2a$, $2b$, or $2y$)
             if (/^\$2[aby]\$/.test(v)) {
-              return true; // Skip validation for hashed passwords
+              return true;
             }
-            
-            // Validate password requirements for plain text passwords
             return (
-              /[A-Z]/.test(v) && // At least one uppercase
-              /[a-z]/.test(v) && // At least one lowercase
-              /[0-9]/.test(v) && // At least one number
-              /[@$!%*?&#^()\-_=+{}[\]|;:'",.<>/~`]/.test(v) // At least one special char
+              /[A-Z]/.test(v) &&
+              /[a-z]/.test(v) &&
+              /[0-9]/.test(v) &&
+              /[@$!%*?&#^()\-_=+{}[\]|;:'",.<>/~`]/.test(v)
             );
           }
           return true;
@@ -52,6 +47,34 @@ const userSchema = new Schema<IUser>(
         message: 'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'
       }
     },
+    // NEW FIELDS FOR PROFILE
+    phone: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    location: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    bio: {
+      type: String,
+      trim: true,
+      maxlength: [500, 'Bio cannot exceed 500 characters'],
+      default: ''
+    },
+    preferences: {
+      notifications: {
+        type: Boolean,
+        default: true
+      },
+      language: {
+        type: String,
+        default: 'en-US'
+      }
+    },
+    // EXISTING FIELDS
     authProvider: {
       type: String,
       enum: ['local', 'google'],
@@ -60,7 +83,7 @@ const userSchema = new Schema<IUser>(
     googleId: {
       type: String,
       unique: true,
-      sparse: true // Allows null values while maintaining uniqueness for non-null values
+      sparse: true
     },
     picture: {
       type: String
@@ -80,7 +103,6 @@ const userSchema = new Schema<IUser>(
 
 // Hash password before saving
 userSchema.pre('save', async function (next) {
-  // Only hash if password is modified and exists
   if (!this.isModified('password') || !this.password) {
     return next();
   }

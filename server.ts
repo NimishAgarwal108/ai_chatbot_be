@@ -12,6 +12,7 @@ import connectDB from './src/config/database';
 import authRoutes from './src/routes/authRoutes';
 import chatRoutes from './src/routes/chatRoutes';
 import voiceRoutes from './src/routes/voiceRoutes';
+import profileRoutes from './src/routes/profileRoutes'; // NEW: Profile routes
 import { errorHandler, notFound } from './src/middleware/errorMiddleware';
 import { getAIVoiceService } from './src/services/aiVoiceService';
 import { VoiceHandler } from './src/websocket/voiceHandler';
@@ -223,6 +224,15 @@ const voiceLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Profile rate limiting - NEW
+const profileLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: IS_PRODUCTION ? 50 : 200,
+  message: 'Too many profile requests, please slow down.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Request logging in development
 if (!IS_PRODUCTION) {
   app.use((req: Request, res: Response, next) => {
@@ -250,6 +260,7 @@ app.get('/health', (req: Request, res: Response) => {
       database: 'connected',
       voice: voiceStatus,
       websocket: 'enabled',
+      profile: 'enabled', // NEW
       speechToText: deepgramApiKey ? 'Deepgram (FREE)' : 'disabled',
       textToSpeech: 'Browser Web Speech API (FREE)',
       aiChat: geminiApiKey ? 'Google Gemini (FREE)' : 'disabled',
@@ -270,12 +281,13 @@ app.get('/', (req: Request, res: Response) => {
   res.json({
     success: true,
     message: 'AI Chat Bot API - SumNex Tech',
-    version: '2.0.0',
+    version: '2.1.0', // Updated version
     platform: IS_RAILWAY ? 'Railway.app' : 'Local Development',
     endpoints: {
       auth: `${baseUrl}/api/auth`,
       chat: `${baseUrl}/api/chat`,
       voice: `${baseUrl}/api/voice`,
+      profile: `${baseUrl}/api/profile`, // NEW
       health: `${baseUrl}/health`,
     },
     websocket: {
@@ -294,6 +306,7 @@ app.get('/', (req: Request, res: Response) => {
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/chat', chatLimiter, chatRoutes);
 app.use('/api/voice', voiceLimiter, voiceRoutes);
+app.use('/api/profile', profileLimiter, profileRoutes); // NEW: Profile routes
 
 // 404 handler
 app.use(notFound);
@@ -325,6 +338,7 @@ const server = httpServer.listen(PORT, HOST, () => {
 ║   📝 Health:      ${railwayUrl}/health${' '.repeat(Math.max(0, 15 - railwayUrl.length))} ║
 ║   💬 Chat:        ${railwayUrl}/api/chat${' '.repeat(Math.max(0, 12 - railwayUrl.length))} ║
 ║   🎤 Voice:       ${railwayUrl}/api/voice${' '.repeat(Math.max(0, 11 - railwayUrl.length))} ║
+║   👤 Profile:     ${railwayUrl}/api/profile${' '.repeat(Math.max(0, 9 - railwayUrl.length))} ║
 ║   📡 WebSocket:   ${railwayUrl.replace('https', 'wss').replace('http', 'ws')}${' '.repeat(Math.max(0, 10 - railwayUrl.length))} ║
 ║                                                       ║
 ║   © 2025 SumNex Tech                                 ║
@@ -365,12 +379,14 @@ const server = httpServer.listen(PORT, HOST, () => {
   
   console.log('');
   console.log('✅ Server is ready to accept connections!');
+  console.log('👤 Profile management enabled'); // NEW
   
   if (!IS_PRODUCTION) {
     console.log('\n💡 Development Tips:');
     console.log('   - Frontend should connect to: http://localhost:3001');
     console.log('   - WebSocket URL: ws://localhost:3001');
     console.log('   - Hot reload enabled with nodemon/ts-node-dev');
+    console.log('   - Profile endpoints: http://localhost:3001/api/profile');
   }
 });
 
